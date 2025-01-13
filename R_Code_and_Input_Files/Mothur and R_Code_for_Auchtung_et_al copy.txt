@@ -1,0 +1,1294 @@
+#Batch files for analysis of processing for data in mothur can be found in MBRA_Analysis_Files/MBRA_Mothur_Files and Mice_Analysis_Files/MICE_MOTHUR_FILES. Note that input file name, ".files" have been manually adjusted from "CDC.files" to avoid confusion between primarily mouse and exclusively MBRA analyses.
+#For MBRA, 
+#Start with biom file that was processed on high performance computing cluster and convert to shared and cons.taoxnomy file using mothur 1.48.1
+biom.info(biom=CDC.final.abund.opti_mcc.BR.0.01.biom, label=0.01)
+#Then, remove samples from a separate study that are not analyzed here.
+get.groups(shared=CDC.final.abund.opti_mcc.BR.0.01.0.01.shared, cons.taxonomy=CDC.final.abund.opti_mcc.BR.0.01.0.01.cons.taxonomy, accnos=CDC2.accnos)
+#For both MBRA and mice, subsample in mothur using the following code (with the shared files "CDC.final.abund.opti_mcc.shared" for mice and "CDC.final.abund.opti_mcc.BR.0.01.pick.shared" for MBRA):
+set.seed(seed=478931)
+sub.sample(shared=current, constaxonomy=current, size=6944)
+dist.shared(shared=current, calc=braycurtis-jclass, output=square)
+#For both MBRA and mice, add column to cons.taxonomy file to add "OTU" as "Species" for analysis at Species-level by ANOCOM-BC2.
+#For MBRA, use mothur version 1.44.1 to make biom for use in phyloseq; shared and cons.taxonomy used for mouse data:
+make.biom(shared=CDC.final.abund.opti_mcc.BR.0.01.pick.0.01.subsample.shared, constaxonomy=CDC.final.abund.opti_mcc.BR.0.01.0.01.cons.subsample.OTU.cons.taxonomy)
+
+#Use R for subsequent analyses:
+library(phyloseq)
+library(vegan)
+library(ggplot2)
+library(pairwiseAdonis)
+library(microbiome)
+library(microViz)
+library(rstatix)
+library(DESeq2)
+library(ANCOMBC)
+library(dplyr)
+library(stats)
+
+#Import file for analysis
+ps<-import_biom("/Users/jenniferauchtung/Desktop/CDC/Files_for_R/CDC.final.abund.opti_mcc.BR.0.01.pick.0.01.subsample.0.01.biom")
+colnames(tax_table(ps)) <- c("Domain", "Phylum", "Class", "Order", "Family",  "Genus", "Species")
+meta<-read.table(file="/Users/jenniferauchtung/Desktop/CDC/Files_for_R/CDC_BR_metadata.txt", header=TRUE, sep="\t")
+rownames(meta)<-meta$SampleID
+BR.phyloseq<-phyloseq(otu_table(ps), tax_table(ps), sample_data(meta))
+#Determine alpha diversity
+adiv <- estimate_richness(BR.phyloseq)
+write.table(adiv, "/Users/jenniferauchtung/Desktop/BR.alphadivvalues.txt", sep="\t")
+#Open file in excel and add to existing metadata
+
+#Identify differentially abundant OTUs and Genera
+tax_fix_interactive(BR.phyloseq) #Find classifications that are not unique
+#Use code to change "uncultured" to unique identifier with next highest classification
+BR.phyloseq<-BR.phyloseq %>%
+     tax_fix(
+         min_length = 4,
+         unknowns = c("uncultured"),
+         sep = " ", anon_unique = TRUE,
+         suffix_rank = "classified")
+BR.AA<-subset_samples(BR.phyloseq, Time=="B") #Select just samples after antibiotics
+#Write out OTU table of selected data
+BR.AA.OTU<-as(otu_table(BR.AA), "matrix") 
+write.table(BR.AA.OTU, "/Users/jenniferauchtung/Desktop/CDC/BR.AA.OTU.table")
+#Write out Tax table of selected data
+BR.AA.TAX<-as(tax_table(BR.AA), "matrix")
+write.table(BR.AA.TAX, "/Users/jenniferauchtung/Desktop/CDC/BR.AA.OTU.TAX.table")
+#Aggregate taxa by Genus and write out OTU and Tax tables
+BR.AA.Genus<-tax_glom(BR.AA, taxrank="Genus")
+BR.AA.Genus.table<-as(otu_table(BR.AA.Genus), "matrix")
+write.table(BR.AA.Genus.table, "/Users/jenniferauchtung/Desktop/CDC/BR.AA.Genus.table")
+BR.AA.Genus.tax<-as(tax_table(BR.AA.Genus), "matrix")
+write.table(BR.AA.Genus.tax, "/Users/jenniferauchtung/Desktop/CDC/BR.AA.Genus.TAX.table")
+
+#Subset samples for pairwise testing at OTU level
+Augmentin.BR<-subset_samples(BR.AA, Treatment %in% c("Untreated", "Augmentin"))
+Azithromycin.BR<-subset_samples(BR.AA, Treatment %in% c("Untreated", "Azithromycin"))
+Cefaclor.BR<-subset_samples(BR.AA, Treatment %in% c("Untreated", "Cefaclor"))
+Ceftriaxone.BR<-subset_samples(BR.AA, Treatment %in% c("Untreated", "Ceftriaxone"))
+Ciprofloxacin.BR<-subset_samples(BR.AA, Treatment %in% c("Untreated", "Ciprofloxacin"))
+Clindamycin.BR<-subset_samples(BR.AA, Treatment %in% c("Untreated", "Clindamycin"))
+Doxycycline.BR<-subset_samples(BR.AA, Treatment %in% c("Untreated", "Doxycycline"))
+Fidaxomicin.BR<-subset_samples(BR.AA, Treatment %in% c("Untreated", "Fidaomixin"))
+Imipenem.BR<-subset_samples(BR.AA, Treatment %in% c("Untreated", "Imipenem"))
+Metronidazole.BR<-subset_samples(BR.AA, Treatment %in% c("Untreated", "Metronidazole"))
+Sulfamethoxazole.BR<-subset_samples(BR.AA, Treatment %in% c("Untreated", "Sulfamethoxazole"))
+Vancomycin.BR<-subset_samples(BR.AA, Treatment %in% c("Untreated", "Vancomycin"))
+
+#Subset samples for pairwise testing at Genus level with DESeq2
+Augmentin.Genus.BR<-subset_samples(BR.AA.Genus, Treatment %in% c("Untreated", "Augmentin"))
+Azithromycin.Genus.BR<-subset_samples(BR.AA.Genus, Treatment %in% c("Untreated", "Azithromycin"))
+Cefaclor.Genus.BR<-subset_samples(BR.AA.Genus, Treatment %in% c("Untreated", "Cefaclor"))
+Ceftriaxone.Genus.BR<-subset_samples(BR.AA.Genus, Treatment %in% c("Untreated", "Ceftriaxone"))
+Ciprofloxacin.Genus.BR<-subset_samples(BR.AA.Genus, Treatment %in% c("Untreated", "Ciprofloxacin"))
+Clindamycin.Genus.BR<-subset_samples(BR.AA.Genus, Treatment %in% c("Untreated", "Clindamycin"))
+Doxycycline.Genus.BR<-subset_samples(BR.AA.Genus, Treatment %in% c("Untreated", "Doxycycline"))
+Fidaxomicin.Genus.BR<-subset_samples(BR.AA.Genus, Treatment %in% c("Untreated", "Fidaxomicin"))
+Imipenem.Genus.BR<-subset_samples(BR.AA.Genus, Treatment %in% c("Untreated", "Imipenem"))
+Metronidazole.Genus.BR<-subset_samples(BR.AA.Genus, Treatment %in% c("Untreated", "Metronidazole"))
+Sulfamethoxazole.Genus.BR<-subset_samples(BR.AA.Genus, Treatment %in% c("Untreated", "Sulfamethoxazole"))
+Vancomycin.Genus.BR<-subset_samples(BR.AA.Genus, Treatment %in% c("Untreated", "Vancomycin"))
+
+#Run ANCOM-BC2 at Species level and output results as tables
+Augmentin_Ancom = ancombc2(data = Augmentin.BR, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Augmentin_Ancom$res, file="AncomBC_Augmentin.OTU.output")
+
+Azithromycin_Ancom = ancombc2(data = Azithromycin.BR, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Azithromycin_Ancom$res, file="AncomBC_Azithromycin.OTU.output")
+
+Cefaclor_Ancom = ancombc2(data = Cefaclor.BR, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Cefaclor_Ancom$res, file="AncomBC_Cefaclor.OTU.output")
+
+Ceftriaxone_Ancom = ancombc2(data = Ceftriaxone.BR, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Ceftriaxone_Ancom$res, file="AncomBC_Ceftriaxone.OTU.output")
+
+Ciprofloxacin_Ancom = ancombc2(data = Ciprofloxacin.BR, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Ciprofloxacin_Ancom$res, file="AncomBC_Ciprofloxacin.OTU.output")
+
+Clindamycin_Ancom = ancombc2(data = Clindamycin.BR, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Clindamycin_Ancom$res, file="AncomBC_Clindamycin.OTU.output")
+
+Doxycycline_Ancom = ancombc2(data = Doxycycline.BR, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Doxycycline_Ancom$res, file="AncomBC_Doxycycline.OTU.output")
+
+Fidaxomicin_Ancom = ancombc2(data = Fidaxomicin.BR, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Fidaxomicin_Ancom$res, file="AncomBC_Fidaxomicin.OTU.output")
+
+Imipenem_Ancom = ancombc2(data = Imipenem.BR, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Imipenem_Ancom$res, file="AncomBC_Imipenem.OTU.output")
+
+Metronidazole_Ancom = ancombc2(data = Metronidazole.BR, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Metronidazole_Ancom$res, file="AncomBC_Metronidazole.OTU.output")
+
+Sulfamethoxazole_Ancom = ancombc2(data = Sulfamethoxazole.BR, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL) 
+write.csv(Sulfamethoxazole_Ancom$res, file="AncomBC_Sulfamethoxazole.OTU.output")
+
+Vancomycin_Ancom = ancombc2(data = Vancomycin.BR, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Vancomycin_Ancom$res, file="AncomBC_Vancomycin.OTU.output")
+
+#Run ANCOM BC at Genus level
+Augmentin_Ancom = ancombc2(data = Augmentin.BR, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Augmentin_Ancom$res, file="AncomBC_Augmentin.Genus.output")
+
+Azithromycin_Ancom = ancombc2(data = Azithromycin.BR, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Azithromycin_Ancom$res, file="AncomBC_Azithromycin.Genus.output")
+
+Cefaclor_Ancom = ancombc2(data = Cefaclor.BR, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Cefaclor_Ancom$res, file="AncomBC_Cefaclor.Genus.output")
+
+Ceftriaxone_Ancom = ancombc2(data = Ceftriaxone.BR, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Ceftriaxone_Ancom$res, file="AncomBC_Ceftriaxone.Genus.output")
+
+Ciprofloxacin_Ancom = ancombc2(data = Ciprofloxacin.BR, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Ciprofloxacin_Ancom$res, file="AncomBC_Ciprofloxacin.Genus.output")
+
+Clindamycin_Ancom = ancombc2(data = Clindamycin.BR, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Clindamycin_Ancom$res, file="AncomBC_Clindamycin.Genus.output")
+
+Doxycycline_Ancom = ancombc2(data = Doxycycline.BR, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Doxycycline_Ancom$res, file="AncomBC_Doxycycline.Genus.output")
+
+Fidaxomicin_Ancom = ancombc2(data = Fidaxomicin.BR, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Fidaxomicin_Ancom$res, file="AncomBC_Fidaxomicin.Genus.output")
+
+Imipenem_Ancom = ancombc2(data = Imipenem.BR, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Imipenem_Ancom$res, file="AncomBC_Imipenem.Genus.output")
+
+Metronidazole_Ancom = ancombc2(data = Metronidazole.BR, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Metronidazole_Ancom$res, file="AncomBC_Metronidazole.Genus.output")
+
+Sulfamethoxazole_Ancom = ancombc2(data = Sulfamethoxazole.BR, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL) 
+write.csv(Sulfamethoxazole_Ancom$res, file="AncomBC_Sulfamethoxazole.Genus.output")
+
+Vancomycin_Ancom = ancombc2(data = Vancomycin.BR, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Vancomycin_Ancom$res, file="AncomBC_Vancomycin.Genus.output")
+
+#Run DESEq2 at OTU level on data
+dds_init<-phyloseq_to_deseq2(Augmentin.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Augmentin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Augmentin.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Augmentin_OTU_DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Azithromycin.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Azithromycin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Azithromycin.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Azithromycin_OTU_DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Cefaclor.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Cefaclor"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Cefaclor.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Cefaclor_OTU_DESeq2")
+               
+dds_init<-phyloseq_to_deseq2(Ceftriaxone.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Ceftriaxone"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Ceftriaxone.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Ceftriaxone_OTU_DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Ciprofloxacin.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Ciprofloxacin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Ciprofloxacin.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Ciprofloxacin_OTU_DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Clindamycin.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Clindamycin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Clindamycin.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Clindamycin_OTU_DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Doxycycline.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Doxycycline"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Doxycycline.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Doxycycline_OTU_DESeq2")
+               
+dds_init<-phyloseq_to_deseq2(Fidaxomicin.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Fidaxomicin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Fidaxomicin.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Fidaxomicin_OTU_DESeq2")
+               
+dds_init<-phyloseq_to_deseq2(Imipenem.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Imipenem"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Imipenem.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Imipenem_OTU_DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Metronidazole.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Metronidazole"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Metronidazole.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Metronidazole_OTU_DESeq2")
+               
+dds_init<-phyloseq_to_deseq2(Sulfamethoxazole.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init)
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Sulfamethoxazole"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Sulfamethoxazole.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Sulfamethoxazole_OTU_DESeq2")
+               
+dds_init<-phyloseq_to_deseq2(Vancomycin.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init)
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Vancomycin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Vancomycin.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Vancomycin_OTU_DESeq2")
+
+#Run DESEq2 at Genus level on data
+dds_init<-phyloseq_to_deseq2(Augmentin.Genus.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Augmentin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Augmentin.Genus.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Augmentin_Genus_DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Azithromycin.Genus.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Azithromycin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Azithromycin.Genus.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Azithromycin_Genus_DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Cefaclor.Genus.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Cefaclor"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Cefaclor.Genus.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Cefaclor_Genus_DESeq2")
+               
+dds_init<-phyloseq_to_deseq2(Ceftriaxone.Genus.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Ceftriaxone"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Ceftriaxone.Genus.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Ceftriaxone_Genus_DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Ciprofloxacin.Genus.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Ciprofloxacin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Ciprofloxacin.Genus.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Ciprofloxacin_Genus_DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Clindamycin.Genus.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Clindamycin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Clindamycin.Genus.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Clindamycin_Genus_DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Doxycycline.Genus.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Doxycycline"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Doxycycline.Genus.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Doxycycline_Genus_DESeq2")
+               
+dds_init<-phyloseq_to_deseq2(Fidaxomicin.Genus.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Fidaxomicin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Fidaxomicin.Genus.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Fidaxomicin_Genus_DESeq2")
+               
+dds_init<-phyloseq_to_deseq2(Imipenem.Genus.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Imipenem"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Imipenem.Genus.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Imipenem_Genus_DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Metronidazole.Genus.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Metronidazole"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Metronidazole.Genus.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Metronidazole_Genus_DESeq2")
+               
+dds_init<-phyloseq_to_deseq2(Sulfamethoxazole.Genus.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init)
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Sulfamethoxazole"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Sulfamethoxazole.Genus.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Sulfamethoxazole_Genus_DESeq2")
+               
+dds_init<-phyloseq_to_deseq2(Vancomycin.Genus.BR, ~Treatment)
+dds_init
+dds<-DESeq(dds_init)
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Vancomycin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Vancomycin.Genus.BR)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Vancomycin_Genus_DESeq2")
+
+#Analyze mouse and bioreactor combined data
+OTU<-import_mothur(mothur_shared_file="/Users/jenniferauchtung/Desktop/CDC/CDC.final.abund.opti_mcc.0.01.subsample.shared")
+TAX<-import_mothur(mothur_constaxonomy_file = "/Users/jenniferauchtung/Desktop/CDC/CDC.final.abund.opti_mcc.0.01.cons.subsample.OTU.cons.taxonomy")
+colnames(tax_table(TAX)) <- c("Domain", "Phylum", "Class", "Order", "Family",  "Genus", "Species")
+META<-read.table(file="/Users/jenniferauchtung/Desktop/CDC/Mice_BR_Metadata2.txt", header=TRUE, sep="\t")
+rownames(META)<-META$SampleID
+Mice.BR.phyloseq<-phyloseq(otu_table(OTU), tax_table(TAX), sample_data(META))
+tax_fix_interactive(Mice.BR.phyloseq)
+Mice.BR.phyloseq<-Mice.BR.phyloseq %>%
+ tax_fix(
+  min_length = 4,
+  unknowns = c("uncultured"),
+  sep = " ", anon_unique = TRUE,
+  suffix_rank = "classified"
+ )
+
+#Identify differentially abundant OTUs and Genera
+#Filter Samples to generate files for testing
+Mice.BR.CDC2.phyloseq<-subset_samples(Mice.BR.phyloseq, Project=="CDC2")
+Mice.CDC2.phyloseq<-subset_samples(Mice.BR.CDC2.phyloseq, Model=="Mice")
+Mice.AA<-subset_samples(Mice.CDC2.phyloseq, Time=="B") #Select just samples after antibiotics
+#Write out OTU table of selected data
+Mice.AA.OTU<-as(otu_table(Mice.AA), "matrix") 
+write.table(Mice.AA.OTU, "/Users/jenniferauchtung/Desktop/CDC/Mice.AA.OTU.table")
+#Write out Tax table of selected data
+Mice.AA.TAX<-as(tax_table(Mice.AA), "matrix")
+write.table(Mice.AA.TAX, "/Users/jenniferauchtung/Desktop/CDC/Mice.AA.OTU.TAX.table")
+#Aggregate taxa by Genus and write out OTU and Tax tables
+Mice.AA.Genus<-tax_glom(Mice.AA, taxrank="Genus")
+Mice.AA.Genus.table<-as(otu_table(Mice.AA.Genus), "matrix")
+write.table(Mice.AA.Genus.table, "/Users/jenniferauchtung/Desktop/CDC/Mice.AA.Genus.table")
+Mice.AA.Genus.tax<-as(tax_table(Mice.AA.Genus), "matrix")
+write.table(Mice.AA.Genus.tax, "/Users/jenniferauchtung/Desktop/CDC/Mice.AA.Genus.TAX.table")
+
+#Plot heatmap of 100 most abundant OTUs in untreated mice after antibiotics and fecal inocula 
+Mice.Heatmap.phyloseq<-subset_samples(Mice.CDC2.phyloseq, Time %in% c("B", "I")
+Mice.abund.Heatmap.phyloseq<-prune_taxa(names(sort(taxa_sums(Mice.Heatmap.phyloseq), TRUE) [1:100]), Mice.Heatmpa.phyloseq)
+plot_heatmap(Mice.abund.Heatmap.phyloseq, sample.order="Order", sample.label="Background", taxa.label="Genus")
+#export as pdf, edit in Illustrator
+
+Mice.Heatmap.Phyla<-tax_glom(Mice.Heatmap.phyloseq, taxrank="Phyla")
+Mice.AA.Genus.table<-as(otu_table(Mice.AA.Genus), "matrix")
+write.table(Mice.AA.Genus.table, "/Users/jenniferauchtung/Desktop/CDC/Mice.AA.Genus.table")
+Mice.AA.Genus.tax<-as(tax_table(Mice.AA.Genus), "matrix")
+write.table(Mice.AA.Genus.tax, "/Users/jenniferauchtung/Desktop/CDC/Mice.AA.Genus.TAX.table")
+
+Mice.Heatmap.bra<-ordinate(Mice.Heamap.phyloseq, method="PCoA", distance="bray")
+p4<-plot_ordination(Mice.Heatmap.phyloseq, Mice.Heatmap.bra, color="Stool", shape="Background")+
+    geom_point(size=4) +
+    theme_bw() + scale_colour_manual(values=c("#3D89DE", "#64C8E2", "#80CF6D")) +
+    theme(text=element_text(family="arial",size=22),
+          strip.text.x = element_text(
+              size = 22, color = "black", face = "bold.italic")) 
+p4
+#export as png
+
+#Run PERMANOVA (adonis2) on data with fecal inocula using code below. 
+ps_tr<-microbiome::transform(Mice.Heatmap.phyloseq, "clr")
+ps_dist_matrix <- phyloseq::distance(Mice.Heatmap.phyloseq, method ="bray")
+#Permanova by Fecal Inoculum
+vegan::adonis2(ps_dist_matrix ~ phyloseq::sample_data(ps_tr)$Stool)
+#Results
+#Permutation test for adonis under reduced model
+#Terms added sequentially (first to last)
+#Permutation: free
+#Number of permutations: 999
+vegan::adonis2(formula = ps_dist_matrix ~ phyloseq::sample_data(ps_tr)$Stool)
+#Results
+#                                    Df SumOfSqs      R2      F Pr(>F)    
+#phyloseq::sample_data(ps_tr)$Stool   2   14.975 0.43888 40.281  0.001 ***
+#Residual                           103   19.146 0.56112                  
+#Total                              105   34.121 1.00000                  
+#---
+#Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+#pairwise.adonis(ps_dist_matrix, phyloseq::sample_data(ps_tr)$Stool)
+#     pairs Df SumsOfSqs  F.Model        R2 p.value p.adjusted sig
+#1 FS05 vs FS04  1  7.585047 41.48194 0.3655378   0.001      0.003   *
+#2 FS05 vs FS06  1  6.067855 29.37685 0.3112718   0.001      0.003   *
+#3 FS04 vs FS06  1  8.725757 51.45388 0.4271666   0.001      0.003   *
+#
+#Permanova by background
+vegan::adonis2(ps_dist_matrix ~ phyloseq::sample_data(ps_tr)$Background)
+#Results
+#Permutation test for adonis under reduced model
+#Terms added sequentially (first to last)
+#Permutation: free
+#Number of permutations: 999
+vegan::adonis2(formula = ps_dist_matrix ~ phyloseq::sample_data(ps_tr)$Background)
+#Results
+#                                         Df SumOfSqs      R2      F Pr(>F)    
+#phyloseq::sample_data(ps_tr)$Background   3    5.128 0.15028 6.0134  0.001 ***
+#Residual                                102   28.994 0.84972                  
+#Total                                   105   34.121 1.00000                  
+#---
+#Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+pairwise.adonis(ps_dist_matrix, phyloseq::sample_data(ps_tr)$Background)
+Results
+#         pairs Df SumsOfSqs  F.Model         R2 p.value p.adjusted sig
+#1 C57 vs Human  1 2.3518681 8.305221 0.17193216   0.001      0.006   *
+#2    C57 vs SW  1 0.8978616 3.155385 0.04842862   0.018      0.108    
+#3   C57 vs C3H  1 1.0221103 3.657207 0.05570153   0.005      0.030   .
+#4  Human vs SW  1 2.2543045 7.729565 0.16194501   0.001      0.006   *
+#5 Human vs C3H  1 2.5789234 9.087510 0.18512877   0.001      0.006   *
+#6    SW vs C3H  1 1.8578866 6.520243 0.09515790   0.001      0.006   *
+
+#Subset samples for pairwise testing at OTU level
+Augmentin.Mice<-subset_samples(Mice.AA, Treatment %in% c("Untreated", "Augmentin"))
+Azithromycin.Mice<-subset_samples(Mice.AA, Treatment %in% c("Untreated", "Azithromycin"))
+Cefaclor.Mice<-subset_samples(Mice.AA, Treatment %in% c("Untreated", "Cefaclor"))
+Ceftriaxone.Mice<-subset_samples(Mice.AA, Treatment %in% c("Untreated", "Ceftriaxone"))
+Clindamycin.Mice<-subset_samples(Mice.AA, Treatment %in% c("Untreated", "Clindamycin"))
+Fidaxomicin.Mice<-subset_samples(Mice.AA, Treatment %in% c("Untreated", "Fidaxomicin"))
+
+#Subset samples for pairwise testing at Genus level with DESeq2
+Augmentin.Genus.Mice<-subset_samples(Mice.AA.Genus, Treatment %in% c("Untreated", "Augmentin"))
+Azithromycin.Genus.Mice<-subset_samples(Mice.AA.Genus, Treatment %in% c("Untreated", "Azithromycin"))
+Cefaclor.Genus.Mice<-subset_samples(Mice.AA.Genus, Treatment %in% c("Untreated", "Cefaclor"))
+Ceftriaxone.Genus.Mice<-subset_samples(Mice.AA.Genus, Treatment %in% c("Untreated", "Ceftriaxone"))
+Clindamycin.Genus.Mice<-subset_samples(Mice.AA.Genus, Treatment %in% c("Untreated", "Clindamycin"))
+Fidaxomicin.Genus.Mice<-subset_samples(Mice.AA.Genus, Treatment %in% c("Untreated", "Fidaxomicin"))
+
+#Run ANCOM-BC2 at Species level and output results as tables
+Augmentin_Ancom = ancombc2(data = Augmentin.Mice, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Augmentin_Ancom$res, file="AncomBC_Augmentin.Mice.OTU.output")
+
+Azithromycin_Ancom = ancombc2(data = Azithromycin.Mice, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Azithromycin_Ancom$res, file="AncomBC_Azithromycin.Mice.OTU.output")
+
+Cefaclor_Ancom = ancombc2(data = Cefaclor.Mice, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Cefaclor_Ancom$res, file="AncomBC_Cefaclor.Mice.OTU.output")
+
+Ceftriaxone_Ancom = ancombc2(data = Ceftriaxone.Mice, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Ceftriaxone_Ancom$res, file="AncomBC_Ceftriaxone.Mice.OTU.output")
+
+Clindamycin_Ancom = ancombc2(data = Clindamycin.Mice, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Clindamycin_Ancom$res, file="AncomBC_Clindamycin.Mice.OTU.output")
+
+Fidaxomicin_Ancom = ancombc2(data = Fidaxomicin.Mice, assay_name = "counts", tax_level = "Species",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Fidaxomicin_Ancom$res, file="AncomBC_Fidaxomicin.Mice.OTU.output")
+
+
+#Run ANCOM BC at Genus level
+Augmentin_Ancom = ancombc2(data = Augmentin.Mice, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Augmentin_Ancom$res, file="AncomBC_Augmentin.Mice.Genus.output")
+
+Azithromycin_Ancom = ancombc2(data = Azithromycin.Mice, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Azithromycin_Ancom$res, file="AncomBC_Azithromycin.Mice.Genus.output")
+
+Cefaclor_Ancom = ancombc2(data = Cefaclor.Mice, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Cefaclor_Ancom$res, file="AncomBC_Cefaclor.Mice.Genus.output")
+
+Ceftriaxone_Ancom = ancombc2(data = Ceftriaxone.Mice, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Ceftriaxone_Ancom$res, file="AncomBC_Ceftriaxone.Mice.Genus.output")
+
+Clindamycin_Ancom = ancombc2(data = Clindamycin.Mice, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Clindamycin_Ancom$res, file="AncomBC_Clindamycin.Mice.Genus.output")
+
+Fidaxomicin_Ancom = ancombc2(data = Fidaxomicin.Mice, assay_name = "counts", tax_level = "Genus",
+                          fix_formula = "Treatment", rand_formula = NULL,
+                          p_adj_method = "holm", pseudo_sens = TRUE,
+                          prv_cut = 0.10, s0_perc = 0.05,
+                          struc_zero = FALSE, neg_lb = FALSE, group="Treatment",
+                          alpha = 0.05, n_cl = 2, verbose = TRUE,
+                          global = FALSE, pairwise = FALSE, 
+                          dunnet = FALSE, trend = FALSE,
+                          iter_control = list(tol = 1e-5, max_iter = 20, 
+                                              verbose = FALSE),
+                          em_control = list(tol = 1e-5, max_iter = 100),
+                          lme_control = NULL, 
+                          mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
+                          trend_control = NULL)
+write.csv(Fidaxomicin_Ancom$res, file="AncomBC_Fidaxomicin.Mice.Genus.output")
+
+#Run DESEq2 at OTU level on data
+dds_init<-phyloseq_to_deseq2(Augmentin.Mice, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Augmentin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Augmentin.Mice)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Augmentin_OTU_Mice.DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Azithromycin.Mice, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Azithromycin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Azithromycin.Mice)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Azithromycin_OTU_Mice.DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Cefaclor.Mice, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Cefaclor"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Cefaclor.Mice)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Cefaclor_OTU_Mice.DESeq2")
+               
+dds_init<-phyloseq_to_deseq2(Ceftriaxone.Mice, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Ceftriaxone"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Ceftriaxone.Mice)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Ceftriaxone_OTU_Mice.DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Clindamycin.Mice, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Clindamycin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Clindamycin.Mice)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Clindamycin_OTU_Mice.DESeq2")
+               
+dds_init<-phyloseq_to_deseq2(Fidaxomicin.Mice, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Fidaxomicin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Fidaxomicin.Mice)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Fidaxomicin_OTU_Mice.DESeq2")
+               
+#Run DESEq2 at Genus level on data
+dds_init<-phyloseq_to_deseq2(Augmentin.Genus.Mice, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Augmentin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Augmentin.Genus.Mice)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Augmentin_Genus_Mice.DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Azithromycin.Genus.Mice, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Azithromycin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Azithromycin.Genus.Mice)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Azithromycin_Genus_Mice.DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Cefaclor.Genus.Mice, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Cefaclor"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Cefaclor.Genus.Mice)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Cefaclor_Genus_Mice.DESeq2")
+               
+dds_init<-phyloseq_to_deseq2(Ceftriaxone.Genus.Mice, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Ceftriaxone"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Ceftriaxone.Genus.Mice)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Ceftriaxone_Genus_Mice.DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Clindamycin.Genus.Mice, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Clindamycin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Clindamycin.Genus.Mice)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Clindamycin_Genus_Mice.DESeq2")
+
+dds_init<-phyloseq_to_deseq2(Fidaxomicin.Genus.Mice, ~Treatment)
+dds_init
+dds<-DESeq(dds_init, sfType="poscounts")
+resultsNames(dds)
+res <-results(dds, contrast=c("Treatment","Untreated","Fidaxomicin"))
+res.0 <- res
+res
+sigtab <- res[which(res$padj <= 0.05) , ]
+sigtab %>% nrow() #no. of significant ASVs
+sigtab <- cbind(as(sigtab, "data.frame"), as(tax_table(Fidaxomicin.Genus.Mice)[rownames(sigtab), ], "matrix"))
+write.csv(sigtab, file="Fidaxomicin_Genus_Mice.DESeq2")
+
+#Plot PCoA plots that compare fecal inocula, bioreactors before treatment, and untreated mice after treatment by fecal sample
+Mice.BR.PCoA.phyloseq<-subset_samples(Mice.BR.phyloseq, PCoA=="Y")
+FS4.Mice.BR.PCoA.phyloseq<-subset_samples(Mice.BR.PCoA.phyloseq, Stool=="FS04")
+FS4.Mice.BR.bra<-ordinate(FS4.Mice.BR.PCoA.phyloseq, method="PCoA", distance="bray")
+p4<-plot_ordination(FS4.Mice.BR.PCoA.phyloseq, FS4.Mice.BR.bra, color="Model", shape="Mouse.Strain")+geom_point(size=4) +
+    theme_bw() + scale_colour_manual(values=c("#3D89DE", "#64C8E2", "#80CF6D")) + scale_shape_manual(values=c(FS=15,BR=16,SW=17,C57=18, C3H=19))
+    theme(text=element_text(family="arial",size=22),
+          strip.text.x = element_text(
+              size = 22, color = "black", face = "bold.italic"))
+p4
+FS4_ps_tr<-microbiome::transform(FS4.Mice.BR.PCoA.phyloseq, "clr")
+FS4_ps_dist_matrix <- phyloseq::distance(FS4.Mice.BR.PCoA.phyloseq, method ="bray")
+vegan::adonis2(FS4_ps_dist_matrix ~ phyloseq::sample_data(FS4_ps_tr)$Model)
+pairwise.adonis(FS4_ps_dist_matrix, phyloseq::sample_data(FS4_ps_tr)$Model)
+#Results
+#                   pairs   Df SumsOfSqs  F.Model        R2 p.value
+#1 Bioreactors vs Inoculum  1  1.510540 10.00471 0.3226836   0.002
+#2     Bioreactors vs Mice  1  4.278048 31.95365 0.3633010   0.001
+#3        Inoculum vs Mice  1  1.661971 14.80317 0.2751357   0.001
+#  p.adjusted sig
+#1      0.006   *
+#2      0.003   *
+#3      0.003   *
+
+FS5.Mice.BR.PCoA.phyloseq<-subset_samples(Mice.BR.PCoA.phyloseq, Stool=="FS05")
+FS5.Mice.BR.bra<-ordinate(FS5.Mice.BR.PCoA.phyloseq, method="PCoA", distance="bray")
+p4<-plot_ordination(FS5.Mice.BR.PCoA.phyloseq, FS5.Mice.BR.bra, color="Model", shape="Mouse.Strain")+geom_point(size=4) +
+    theme_bw() + scale_colour_manual(values=c("#3D89DE", "#64C8E2", "#80CF6D")) + scale_shape_manual(values=c(FS=15,BR=16,SW=17,C57=18, C3H=19))
+    theme(text=element_text(family="arial",size=22),
+          strip.text.x = element_text(
+              size = 22, color = "black", face = "bold.italic"))
+p4
+FS5_ps_tr<-microbiome::transform(FS5.Mice.BR.PCoA.phyloseq, "clr")
+FS5_ps_dist_matrix <- phyloseq::distance(FS5.Mice.BR.PCoA.phyloseq, method ="bray")
+vegan::adonis2(FS5_ps_dist_matrix ~ phyloseq::sample_data(FS5_ps_tr)$Model)
+pairwise.adonis(FS5_ps_dist_matrix, phyloseq::sample_data(FS5_ps_tr)$Model)
+#Results
+#                   pairs Df SumsOfSqs   F.Model        R2 p.value
+#1     Bioreactors vs Mice  1  2.857468 17.096714 0.2510652   0.001
+#2 Bioreactors vs Inoculum  1  1.572034 10.208371 0.3271036   0.001
+#3        Mice vs Inoculum  1  1.422673  7.577336 0.1738825   0.001
+#  p.adjusted sig
+#1      0.003   *
+#2      0.003   *
+#3      0.003   *
+
+FS6.Mice.BR.PCoA.phyloseq<-subset_samples(Mice.BR.PCoA.phyloseq, Stool=="FS06")
+FS6.Mice.BR.bra<-ordinate(FS6.Mice.BR.PCoA.phyloseq, method="PCoA", distance="bray")
+p4<-plot_ordination(FS6.Mice.BR.PCoA.phyloseq, FS6.Mice.BR.bra, color="Model", shape="Mouse.Strain")+geom_point(size=4) +
+    theme_bw() + scale_colour_manual(values=c("#3D89DE", "#64C8E2", "#80CF6D")) + scale_shape_manual(values=c(FS=15,BR=16,SW=17,C57=18, C3H=19))
+    theme(text=element_text(family="arial",size=22),
+          strip.text.x = element_text(
+              size = 22, color = "black", face = "bold.italic"))
+p4
+FS6_ps_tr<-microbiome::transform(FS6.Mice.BR.PCoA.phyloseq, "clr")
+FS6_ps_dist_matrix <- phyloseq::distance(FS6.Mice.BR.PCoA.phyloseq, method ="bray")
+vegan::adonis2(FS6_ps_dist_matrix ~ phyloseq::sample_data(FS6_ps_tr)$Model)
+pairwise.adonis(FS6_ps_dist_matrix, phyloseq::sample_data(FS6_ps_tr)$Model)
+#Results
+#                    pairs Df SumsOfSqs  F.Model        R2 p.value
+#1 Bioreactors vs Inoculum  1  1.779823 14.97205 0.4162135   0.002
+#2     Bioreactors vs Mice  1  4.354154 31.39511 0.4004728   0.001
+#3        Inoculum vs Mice  1  1.936519 14.36439 0.3237820   0.001
+#  p.adjusted sig
+#1      0.006   *
+#2      0.003   *
+#3      0.003   *
