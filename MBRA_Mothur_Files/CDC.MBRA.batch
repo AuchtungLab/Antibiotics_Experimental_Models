@@ -1,0 +1,36 @@
+make.contigs(file=CDC.files, processors=16)
+screen.seqs(fasta=CDC.trim.contigs.fasta, group=CDC.contigs.groups, maxambig=0, maxlength=275, processors=8)
+unique.seqs(fasta=CDC.trim.contigs.good.fasta)
+count.seqs(name=CDC.trim.contigs.good.names, group=CDC.contigs.good.groups)
+summary.seqs(count=CDC.trim.contigs.good.count_table)
+align.seqs(fasta=CDC.trim.contigs.good.unique.fasta, reference=/common/auchtunglab/tommy/silva132.v4.fasta)
+summary.seqs(fasta=CDC.trim.contigs.good.unique.align, count=CDC.trim.contigs.good.count_table)
+screen.seqs(fasta=CDC.trim.contigs.good.unique.align, count=CDC.trim.contigs.good.count_table, summary=CDC.trim.contigs.good.unique.summary, start=1968, end=11550, maxhomop=8)
+filter.seqs(fasta=CDC.trim.contigs.good.unique.good.align, vertical=T, trump=.)
+unique.seqs(fasta=CDC.trim.contigs.good.unique.good.filter.fasta, count=CDC.trim.contigs.good.good.count_table)
+pre.cluster(fasta=CDC.trim.contigs.good.unique.good.filter.unique.fasta, count=CDC.trim.contigs.good.unique.good.filter.count_table, diffs=2)
+chimera.uchime(fasta=CDC.trim.contigs.good.unique.good.filter.unique.precluster.fasta, count=CDC.trim.contigs.good.unique.good.filter.unique.precluster.count_table, dereplicate=t)
+remove.seqs(fasta=CDC.trim.contigs.good.unique.good.filter.unique.precluster.fasta, accnos=CDC.trim.contigs.good.unique.good.filter.unique.precluster.denovo.uchime.accnos, count=CDC.trim.contigs.good.unique.good.filter.unique.precluster.denovo.uchime.pick.count_table)
+summary.seqs(fasta=current, count=current)
+classify.seqs(fasta=CDC.trim.contigs.good.unique.good.filter.unique.precluster.pick.fasta, count=CDC.trim.contigs.good.unique.good.filter.unique.precluster.denovo.uchime.pick.pick.count_table, reference=/common/auchtunglab/tommy/silva132.v4.fasta, taxonomy=/common/auchtunglab/tommy/silva.nr_v132.tax, cutoff=80)
+remove.lineage(fasta=CDC.trim.contigs.good.unique.good.filter.unique.precluster.pick.fasta, count=CDC.trim.contigs.good.unique.good.filter.unique.precluster.denovo.uchime.pick.pick.count_table, taxonomy=CDC.trim.contigs.good.unique.good.filter.unique.precluster.pick.nr_v132.wang.taxonomy, taxon=Chloroplast-Mitochondria-unknown-Archaea-Eukaryota)
+system(mv CDC.trim.contigs.good.unique.good.filter.unique.precluster.pick.pick.fasta CDC.final.fasta)
+system(mv CDC.trim.contigs.good.unique.good.filter.unique.precluster.pick.nr_v132.wang.pick.taxonomy CDC.final.silva.taxonomy)
+system(mv CDC.trim.contigs.good.unique.good.filter.unique.precluster.denovo.uchime.pick.pick.pick.count_table CDC.final.count_table)
+
+split.abund(fasta=CDC.final.fasta, count=CDC.final.count_table, cutoff=5)
+dist.seqs(fasta=CDC.final.abund.fasta, cutoff=0.10, processors=8)
+
+#97percent
+cluster(column=CDC.final.abund.dist, count=CDC.final.abund.count_table)
+make.shared(list=CDC.final.abund.opti_mcc.list, count=CDC.final.abund.count_table, label=0.03)
+classify.otu(list=CDC.final.abund.opti_mcc.list, count=CDC.final.abund.count_table, taxonomy=CDC.final.silva.taxonomy, label=0.03)
+make.biom(shared=CDC.final.abund.opti_mcc.shared, constaxonomy=CDC.final.abund.opti_mcc.0.03.cons.taxonomy)
+
+#99percent
+cluster(column=CDC.final.abund.dist, count=CDC.final.abund.count_table, cutoff=0.01)
+make.shared(list=CDC.final.abund.opti_mcc.list, count=CDC.final.abund.count_table, label=0.01)
+classify.otu(list=CDC.final.abund.opti_mcc.list, count=CDC.final.abund.count_table, taxonomy=CDC.final.silva.taxonomy, label=0.01)
+make.biom(shared=CDC.final.abund.opti_mcc.shared, constaxonomy=CDC.final.abund.opti_mcc.0.01.cons.taxonomy)
+
+quit()
